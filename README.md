@@ -1,10 +1,36 @@
-# onlineshoppingprice
-Track price online shopping
+# 🛒 Online Shopping Price Tracker
 
-as the web page structure of each retailers are diffeernt.
+> Track and analyze product prices across online retailers 📉📊  
 
-[Technical] WE need to inspect [Right click] and use [Mouse Hover] to get and copy element.
-[For Users] who prefer to get data from your interest product/category you can clone and change on url and RUN.
+This project helps you **track product prices from online shopping websites** for analysis purposes.  
+Since **each retailer has a different web page structure**, the scraping logic must be adjusted per site.
 
+---
 
-[Owner] Purpose of this code project is used for analysing not any commercial use/criminal action.
+## ✨ Features
+
+✅ Track prices by **product** or **category**  
+✅ Flexible for **multiple retailers**  
+✅ URL‑based targeting (easy to modify)  
+✅ Built mainly for **data analysis & learning**
+
+---
+
+## 🧠 How It Works
+
+Because every retailer structures their website differently:
+
+### 🔍 Technical Approach
+- Inspect the webpage:
+  - **Right‑click → Inspect**
+  - Use **Mouse Hover** to identify elements
+- Copy the required **HTML elements / selectors**
+- Update the scraper logic accordingly
+
+### 🙋 For Users
+If you want data from your **interested product or category**:
+1. Clone the repository
+2. Modify the **URL** to your target product/category
+3. Run the script 🚀
+
+---
