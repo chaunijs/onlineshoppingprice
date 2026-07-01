@@ -2,19 +2,21 @@ name: Scheduled Retail Price Scraper
 
 on:
   schedule:
-    # Runs at 09:00 UTC every day, which is 16:00 (4:00 PM) in Thailand
+    # 09:00 UTC = 16:00 (4:00 PM) Thailand Time
     - cron: '0 9 * * *'
-  workflow_dispatch: # Allows you to click a button in GitHub UI to run manually
+  workflow_dispatch: 
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
+      # UPDATED to v4
       - name: Checkout Repository Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # UPDATED to v5
       - name: Setup Python Environment
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -28,10 +30,10 @@ jobs:
         run: |
           python orchestrator.py
 
-      # This step saves both your generated data tables and the completed execution logs
+      # UPDATED to v4 (This fixes your error)
       - name: Archive Run Artifacts (Excel / Logs)
-        if: always() # Ensures outputs are uploaded even if some notebooks errored out
-        uses: actions/upload-artifact@v3
+        if: always() 
+        uses: actions/upload-artifact@v4
         with:
           name: scraping-pipeline-outputs
           path: output/
