@@ -7,9 +7,9 @@ import papermill as pm
 notebooks = [
     {"name": "7_eleven_allonline.ipynb", "output": "output/7_eleven_out.ipynb"},
     {"name": "Makro_scraping.ipynb", "output": "output/Makro_out.ipynb"},
-    {"name": "Tops__cloudflare.ipynb", "output": "output/Tops_out.ipynb"},
-    {"name": "big_C_cloudflare.ipynb", "output": "output/BigC_out.ipynb"},
-    {"name": "lotus_online_scraping.ipynb", "output": "output/Lotus_out.ipynb"}
+    # {"name": "Tops__cloudflare.ipynb", "output": "output/Tops_out.ipynb"},
+    # {"name": "big_C_cloudflare.ipynb", "output": "output/BigC_out.ipynb"},
+    # {"name": "lotus_online_scraping.ipynb", "output": "output/Lotus_out.ipynb"}
 ]
 
 # Ensure output directory exists for the executed versions
