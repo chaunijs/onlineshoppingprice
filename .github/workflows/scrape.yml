@@ -1,0 +1,37 @@
+name: Scheduled Retail Price Scraper
+
+on:
+  schedule:
+    # Runs at 09:00 UTC every day, which is 16:00 (4:00 PM) in Thailand
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allows you to click a button in GitHub UI to run manually
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python Environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install System and Python Dependencies
+        run: |
+          pip install papermill ipykernel playwright patchright scrapling selenium beautifulsoup4 curl_cffi browserforge easyocr pillow pytesseract xlsxwriter fastexcel nest_asyncio requests msgspec chromedriver-autoinstaller webdriver-manager deep-translator
+          playwright install chromium
+          patchright install chromium
+
+      - name: Run Sequential Orchestrator
+        run: |
+          python orchestrator.py
+
+      # This step saves both your generated data tables and the completed execution logs
+      - name: Archive Run Artifacts (Excel / Logs)
+        if: always() # Ensures outputs are uploaded even if some notebooks errored out
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraping-pipeline-outputs
+          path: output/
