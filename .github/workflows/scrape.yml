@@ -36,4 +36,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scraping-pipeline-outputs
-          path: output/
+          path: py/output/
