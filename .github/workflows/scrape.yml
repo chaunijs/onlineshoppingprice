@@ -22,15 +22,15 @@ jobs:
 
       - name: Install System and Python Dependencies
         run: |
-          pip install papermill ipykernel playwright patchright scrapling selenium beautifulsoup4 curl_cffi browserforge easyocr pillow pytesseract xlsxwriter fastexcel nest_asyncio requests msgspec chromedriver-autoinstaller webdriver-manager deep-translator
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
           playwright install chromium
-          patchright install chromium
 
       - name: Run Sequential Orchestrator
         run: |
           python orchestrator.py
 
-      # UPDATED to v4 (This fixes your error)
+      # UPDATED to v4
       - name: Archive Run Artifacts (Excel / Logs)
         if: always() 
         uses: actions/upload-artifact@v4
