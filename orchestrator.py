@@ -6,7 +6,10 @@ import traceback
 # List your Python scripts with their path relative to orchestrator.py
 scripts = [
     "py/7_eleven_scraper.py",
-    "py/makro_scraper.py"
+    "py/makro_scraper.py",
+    "py/big_c_scraper.py",
+    "py/lotus_scraper.py",
+    "py/tops_scraper.py",
 ]
 
 print("🚀 Starting Sequential Scraper Pipeline...")

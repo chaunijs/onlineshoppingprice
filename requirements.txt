@@ -1,6 +1,18 @@
+# Core data processing
 polars
+pandas
+
+# Web scraping
 selenium
 playwright
+patchright
 beautifulsoup4
+
+# Excel handling
 xlsxwriter
 fastexcel
+openpyxl
+
+# Patchright dependencies (Tops Cloudflare bypass)
+msgspec
+browserforge
