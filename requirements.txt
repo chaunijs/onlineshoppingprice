@@ -8,11 +8,19 @@ playwright
 patchright
 beautifulsoup4
 scrapling
+requests
 
 # Excel handling
 xlsxwriter
 fastexcel
 openpyxl
+
+# Image processing
+Pillow
+numpy
+
+# OCR (optional)
+easyocr
 
 # Patchright dependencies (Tops Cloudflare bypass)
 msgspec
