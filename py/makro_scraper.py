@@ -206,12 +206,16 @@ async def scrape_makro_spa_clicker(start_url: str) -> pl.DataFrame:
 # ---------------------------------------------------------------------
 async def scrape_watchlist_with_conditions(urls: list) -> pl.DataFrame:
     scraped_data = []
-    price_pattern = re.compile(r'^\s*฿\s*[\d,]+(\.\d+)?\s*$')
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            user_agent="Mozilla/5.0..."
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080}
         )
         page = await context.new_page()
 
@@ -219,10 +223,17 @@ async def scrape_watchlist_with_conditions(urls: list) -> pl.DataFrame:
             print(f"Scraping conditions: {url}")
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_selector(
-                    '[data-test-id$="_product_title"]',
-                    timeout=10000
-                )
+                
+                # Wait for title to ensure page load, then give a short buffer for SPA pricing blocks
+                try:
+                    await page.wait_for_selector(
+                        '[data-test-id$="_product_title"], h1',
+                        timeout=10000
+                    )
+                except Exception:
+                    pass
+                
+                await asyncio.sleep(2) 
 
                 content = await page.content()
                 soup = BeautifulSoup(content, "html.parser")
@@ -235,28 +246,40 @@ async def scrape_watchlist_with_conditions(urls: list) -> pl.DataFrame:
                 )
                 product_name = name_div.text.strip() if name_div else "Name not found"
 
-                tier_divs = soup.find_all(
-                    'div',
-                    attrs={
-                        'data-test-id': lambda x: x and x.startswith('unit_tier_')
-                    }
-                )
-                conditions = [tier.text.strip() for tier in tier_divs]
-
                 condition_dict = {}
-                if conditions:
-                    price_tags = soup.find_all(
-                        lambda tag: (
-                            tag.name == 'span'
-                            and tag.text
-                            and price_pattern.match(tag.text.strip())
-                        )
-                    )
-                    all_valid_prices = [tag.text.strip() for tag in price_tags]
-                    prices = all_valid_prices[-len(conditions):]
-                    condition_dict = dict(zip(conditions, prices))
+                text_nodes = list(soup.stripped_strings)
+                
+                # Find the starting index of the promotional block
+                idx = -1
+                for i, text in enumerate(text_nodes):
+                    if "buy more" in text.lower() and "save more" in text.lower():
+                        idx = i
+                        break
+                
+                # Extract headers (units) and values (prices) directly from the text sequence
+                if idx != -1:
+                    subset = text_nodes[idx + 1 : idx + 20]
+                    units = []
+                    prices = []
+                    
+                    for i, text in enumerate(subset):
+                        # Match headers like "1 - 1 units", "2+ units"
+                        if "unit" in text.lower() and any(c.isdigit() for c in text):
+                            units.append(text)
+                        # Match prices and handle potential HTML splitting between '฿' and the number
+                        elif "฿" in text:
+                            if text.strip() == "฿" and i + 1 < len(subset):
+                                prices.append(f"฿ {subset[i+1].strip()}")
+                            else:
+                                prices.append(text)
+                    
+                    # Map them together 1:1
+                    if units and prices:
+                        pair_count = min(len(units), len(prices))
+                        condition_dict = dict(zip(units[:pair_count], prices[:pair_count]))
 
-                condition_json = json.dumps(condition_dict, ensure_ascii=False)
+                # Keep conditions nested cleanly as a JSON string
+                condition_json = json.dumps(condition_dict, ensure_ascii=False) if condition_dict else "{}"
 
                 scraped_data.append({
                     "url": url,
@@ -275,7 +298,6 @@ async def scrape_watchlist_with_conditions(urls: list) -> pl.DataFrame:
             pl.col("condition").replace("{}", None)
         )
     return df
-
 
 # ---------------------------------------------------------------------
 # Watchlist Price Scraper (Concurrent)
