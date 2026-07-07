@@ -1,4 +1,4 @@
-name: Online Price Scraper
+name: Online Price Scraper Pipeline
 
 on:
   schedule:
@@ -10,31 +10,40 @@ jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
-      # UPDATED to v4
       - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      # UPDATED to v5
+      - name: Install System Dependencies (Tesseract OCR)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-tha
+
       - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install System and Python Dependencies
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Install Playwright & Patchright Browsers
+        run: |
           playwright install chromium
+          playwright install-deps
           patchright install chromium
+          patchright install-deps
 
       - name: Run Sequential Orchestrator
         run: |
           python orchestrator.py
 
-      # UPDATED to v4
       - name: Archive Run Artifacts (Excel / Logs)
         if: always() 
         uses: actions/upload-artifact@v4
         with:
           name: scraping-pipeline-outputs
           path: py/output/
+          retention-days: 7
