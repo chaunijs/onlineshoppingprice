@@ -6,7 +6,7 @@ import traceback
 scripts = [
     "py/7_eleven_scraper.py",
     "py/makro_scraper.py",
-    "py/big_c_scraper.py",
+    # "py/big_c_scraper.py",
     "py/lotus_scraper.py",
     "py/tops_scraper.py",
 ]
