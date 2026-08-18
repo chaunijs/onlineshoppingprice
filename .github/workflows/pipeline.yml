@@ -3,7 +3,7 @@ name: Online Price Scraper Pipeline
 on:
   schedule:
    # Runs at 11:00 Thailand time (ICT) on Monday (1), Wednesday (3), and Friday (5)
-    - cron: '0 4 * * 1,3,5'
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 jobs:
