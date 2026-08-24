@@ -2,26 +2,33 @@
 """
 BigC Online Product Scraper
 Automated scraper designed to run in standalone Python environments and GitHub Actions.
-Fetches product catalog and watchlist data, processes the data with Polars, and saves to Excel and Zip.
+Fetches product catalog and watchlist data, processes the data with Polars, and saves to Excel.
 """
 
 import os
 import re
 import time
 import json
-import zipfile
 import datetime
 from datetime import date
+from pathlib import Path
 import concurrent.futures
-
 import polars as pl
 from scrapling.fetchers import StealthyFetcher
 
 # ----------------------------------------------------------------------
-# CONFIGURATION
+# CONFIGURATION & OUTPUT DIRECTORY
 # ----------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).parent.resolve()
+OUTPUT_DIR = SCRIPT_DIR / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+print(f"Today is {today_date}")
+print(f"Output directory: {OUTPUT_DIR}")
+
 URLS = [
-    "https://www.bigc.co.th/en/category/laundry?page={page}&limit=90",
+    "https://www.bigc.co.th/en/category/laundry?limit=90&page={page}",
 ]
 
 DELAY_SECONDS = 2
@@ -70,7 +77,6 @@ LIST_TO_SEARCH = [
     'ATTACK EZ Conventional Detergent Happy Sweet Scent 1700 g.'
 ]
 
-
 # ----------------------------------------------------------------------
 # HELPER FUNCTIONS
 # ----------------------------------------------------------------------
@@ -80,12 +86,10 @@ def clean_price(value: str) -> str:
         return None
     return value.replace("฿", "").replace(",", "").strip()
 
-
 def extract_product(item) -> dict:
     """Extract one product's fields from a single card element."""
-    # Product Name
     name = item.css('p[class*="line-clamp-2"]::text').get()
-
+    
     # 1. Promotion Price
     promotion_price = item.css('p[class*="text-red-500"] span[class*="text-xl"]::text').get()
     if not promotion_price:
@@ -98,10 +102,10 @@ def extract_product(item) -> dict:
     # 3. Badges / Conditions (Excludes Nextday / delivery tags)
     condition_spans = item.css('a div span::text').getall()
     conditions = [
-        s.strip() for s in condition_spans
-        if s.strip()
-        and s.strip() != '฿'
-        and not s.strip().startswith('-')
+        s.strip() for s in condition_spans 
+        if s.strip() 
+        and s.strip() != '฿' 
+        and not s.strip().startswith('-') 
         and s.strip().lower() not in ["nextday", "next day"]
     ]
     condition = " | ".join(list(dict.fromkeys(conditions))) if conditions else None
@@ -113,11 +117,10 @@ def extract_product(item) -> dict:
         "condition": condition,
     }
 
-
 def extract_watchlist_item(page_result, url: str) -> dict:
     """Extracts product data by first inspecting Next.js JSON, falling back to HTML."""
     name, promo_price, orig_price, condition = None, None, None, None
-
+    
     # 1. Try extracting from Next.js embedded JSON
     try:
         raw_json = page_result.css('script#__NEXT_DATA__::text').get()
@@ -125,15 +128,14 @@ def extract_watchlist_item(page_result, url: str) -> dict:
             json_data = json.loads(raw_json)
             page_props = json_data.get("props", {}).get("pageProps", {})
             product = page_props.get("product") or page_props.get("initialData", {}).get("product")
-
+            
             if product:
                 name = product.get("name") or product.get("title")
                 promo_price = product.get("final_price") or product.get("special_price") or product.get("price")
                 orig_price = product.get("price") or product.get("original_price")
                 if promo_price == orig_price:
                     promo_price = None
-
-                # Check for badges / conditions in JSON
+                
                 badges = product.get("badges") or product.get("promotions") or []
                 if isinstance(badges, list):
                     condition = " | ".join([b.get("label", "") for b in badges if isinstance(b, dict) and b.get("label")])
@@ -156,9 +158,9 @@ def extract_watchlist_item(page_result, url: str) -> dict:
     if not condition:
         badge_spans = page_result.css('main span::text').getall()
         valid_badges = [
-            b.strip() for b in badge_spans
-            if b.strip() and b.strip() != '฿'
-            and not b.strip().startswith('-')
+            b.strip() for b in badge_spans 
+            if b.strip() and b.strip() != '฿' 
+            and not b.strip().startswith('-') 
             and b.strip().lower() not in ["nextday", "next day", "pickup", "express", "add to cart", "share"]
         ]
         promo_words = [b for b in valid_badges if any(k in b.lower() for k in ["save", "get", "free", "pack", "disc", "off", "deal"])]
@@ -171,16 +173,11 @@ def extract_watchlist_item(page_result, url: str) -> dict:
         "condition": condition
     }
 
-
 # ----------------------------------------------------------------------
 # DATA TRANSFORMATION UDFs
 # ----------------------------------------------------------------------
 def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Standardizes pricing logic:
-    1. If original_price is missing, move the promotion_price to it.
-    2. If promotion_price matches the original_price, set it to Null.
-    """
+    """Standardizes pricing logic."""
     return (
         df.with_columns(
             pl.when(pl.col("original_price").is_null() & pl.col("promotion_price").is_not_null())
@@ -196,28 +193,23 @@ def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
         )
     )
 
-
 def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
-    """
-    Standardizes columns, extracts Brand, Volume, Unit, Pack size, and Retailer.
-    """
-    today_date = date.today().strftime("%Y-%m-%d")
+    """Standardizes columns, extracts Brand, Volume, Unit, Pack size, and Retailer."""
     quant_unit_pattern = r"(?i)([\d.]+)\s*(ML|G|KG|L|GRAMS?)"
     pack_pattern = r"(?i)(PACK\s*\d*\s*FREE\s*\d+|PACK\s*\d*\s*\+\s*\d+|PACK\s*\d+|TWINPACK|\bX\s*\d+\b|P?\d+\s*\+\s*\d+|\(\d+\+\d+\)|\d+\s*FREE\s*\d+|\bPACK\b)"
-
+    
     return df.with_columns(
         pl.lit(today_date).alias("Date"),
         pl.col("name").str.split(" ").list.first().alias("Brand"),
         pl.col("name")
-          .str.extract(quant_unit_pattern, 1)
-          .str.replace_all(",", "")
-          .cast(pl.Int64, strict=False)
-          .alias("Volume"),
+            .str.extract(quant_unit_pattern, 1)
+            .str.replace_all(",", "")
+            .cast(pl.Int64, strict=False)
+            .alias("Volume"),
         pl.col("name").str.extract(quant_unit_pattern, 2).str.to_uppercase().alias("Unit"),
         pl.col("name").str.extract(pack_pattern, 1).str.to_uppercase().alias("Pack"),
         pl.lit(shop_name).alias("Retailer")
     )
-
 
 # ----------------------------------------------------------------------
 # SCRAPING ROUTINES
@@ -231,42 +223,32 @@ def scrape_catalog(max_pages: int = None) -> list[dict]:
             if max_pages and page > max_pages:
                 print(f"[*] Reached maximum configured page limit ({max_pages}).")
                 break
-
             url = base_url.format(page=page) if "{page}" in base_url else base_url
             print(f"[*] Fetching: {url}")
-
             try:
                 page_result = StealthyFetcher.fetch(url, headless=True, network_idle=True)
                 containers = page_result.css(PRODUCT_CARD_SELECTOR)
-
                 if not containers:
                     print(f"    -> No product cards found on page {page}. Category complete.")
                     break
-
                 print(f"    -> Found {len(containers)} products on page {page}")
-
                 for item in containers:
                     data = extract_product(item)
                     if data["product_name"]:
                         all_data.append(data)
-
             except Exception as e:
                 print(f"    [!] Error fetching catalog page {page}: {e}")
                 break
-
             time.sleep(DELAY_SECONDS)
             if "{page}" not in base_url:
                 break
             page += 1
-
     return all_data
-
 
 def scrape_watchlist(urls: list[str], delay: int = 1) -> list[dict]:
     """Iterates through a list of individual product URLs and scrapes their details."""
     scraped_data = []
     total = len(urls)
-
     for i, url in enumerate(urls, 1):
         print(f"[*] [{i}/{total}] Fetching Watchlist Item: {url.split('/product/')[-1]}")
         try:
@@ -276,17 +258,13 @@ def scrape_watchlist(urls: list[str], delay: int = 1) -> list[dict]:
                 scraped_data.append(item_data)
         except Exception as e:
             print(f"    [!] Error fetching {url}: {e}")
-
         time.sleep(delay)
-
     return scraped_data
-
 
 # ----------------------------------------------------------------------
 # MAIN EXECUTION
 # ----------------------------------------------------------------------
 def main():
-    today_date = datetime.datetime.now().strftime("%Y-%m-%d")
     print(f"=== Starting BigC Scraper ({today_date}) ===")
 
     # 1. Scrape Catalog
@@ -298,7 +276,6 @@ def main():
     if catalog_rows:
         df_catalog_raw = pl.DataFrame(catalog_rows).unique()
         print(f"[✓] Scraped {len(df_catalog_raw)} unique catalog items.")
-
         df_catalog_clean = df_catalog_raw.select([
             pl.col("product_name").alias("name"),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
@@ -320,7 +297,6 @@ def main():
     if watchlist_rows:
         df_watchlist_raw = pl.DataFrame(watchlist_rows).unique()
         print(f"[✓] Scraped {len(df_watchlist_raw)} unique watchlist items.")
-
         df_watchlist_clean = df_watchlist_raw.select([
             pl.col("product_name").alias("name"),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
@@ -348,14 +324,21 @@ def main():
         df_trans_watchlist = pl.DataFrame()
         search_results_df = pl.DataFrame()
 
-    # 4. Save Excel Files
+    # 4. Save Excel Files (Matched to Lotus Scraper format)
     print("\n--- 4. Exporting Excel Files ---")
-    catalog_excel = f"big_c_catalog_{today_date}.xlsx"
-    watchlist_excel = f"big_c_watchlist_{today_date}.xlsx"
-    search_excel = f"search_result_big_c_{today_date}.xlsx"
+    catalog_file = OUTPUT_DIR / f"big_c_{today_date}.xlsx"
+    df_trans_big_c.write_excel(str(catalog_file))
+    print(f"✅ Saved catalog output: {catalog_file}")
+
+    search_file = OUTPUT_DIR / f"big_c_search_result_{today_date}.xlsx"
+    search_results_df.write_excel(str(search_file))
+    print(f"✅ Saved search output: {search_file}")
+
+    watchlist_file = OUTPUT_DIR / f"big_c_watchlist_{today_date}.xlsx"
+    df_trans_watchlist.write_excel(str(watchlist_file))
+    print(f"✅ Saved watchlist output: {watchlist_file}")
 
     print("\n=== Scraper completed successfully ===")
-
 
 if __name__ == "__main__":
     main()
