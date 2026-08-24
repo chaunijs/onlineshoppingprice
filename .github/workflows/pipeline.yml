@@ -54,4 +54,4 @@ jobs:
         with:
           name: ${{ steps.set_artifact_name.outputs.artifact_name }}
           path: py/output/
-          retention-days: 7
+          retention-days: 15
