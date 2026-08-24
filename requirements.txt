@@ -19,9 +19,9 @@ openpyxl
 Pillow
 numpy
 
-# OCR (optional)
-easyocr
+
 
 # Patchright dependencies (Tops Cloudflare bypass)
 msgspec
 browserforge
+curl-cffi
