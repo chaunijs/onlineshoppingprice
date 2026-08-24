@@ -41,17 +41,19 @@ jobs:
           python orchestrator.py
 
       - name: Set artifact name with execution day
-        id: set_artifact_name
+        id: set-artifact-name
+        if: always()
         run: |
-          # Format: scraping-pipeline-outputs_YYYY-MM-DD (UTC date)
-          EXEC_DATE=$(date -u +'%Y-%m-%d')
-          ARTIFACT_NAME="scraping-pipeline-outputs_${EXEC_DATE}"
-          echo "artifact_name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+          # or if using step outputs:
+          # echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
       - name: Archive Run Artifacts (Excel / Logs)
-        if: always() 
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ${{ steps.set_artifact_name.outputs.artifact_name }}
-          path: py/output/
-          retention-days: 15
+          name: ${{ env.artifact_name || 'pipeline-run-artifacts' }}
+          path: |
+            *.xlsx
+            *.csv
+            logs/
