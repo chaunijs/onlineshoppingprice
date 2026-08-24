@@ -49,11 +49,9 @@ jobs:
           # echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
       - name: Archive Run Artifacts (Excel / Logs)
+        if: always() 
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: ${{ env.artifact_name || 'pipeline-run-artifacts' }}
-          path: |
-            *.xlsx
-            *.csv
-            logs/
+          name: scraping-pipeline-outputs
+          path: py/output/
+          retention-days: 7
