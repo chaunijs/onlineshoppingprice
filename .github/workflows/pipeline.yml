@@ -19,7 +19,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          
+
       - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
@@ -45,7 +45,7 @@ jobs:
       - name: Set artifact name with execution day
         if: always()
         run: |
-          echo "artifact_name=scraper-pipeline-outputs-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+          echo "artifact_name=scraping-pipeline-outputs-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Archive Run Artifacts (Excel / Logs)
         if: always()
