@@ -16,12 +16,19 @@ Changelog:
 """
 
 import os
+import sys
 import asyncio
 import random
 import datetime
 from collections import deque
 from datetime import date
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import polars as pl
 from bs4 import BeautifulSoup
@@ -151,7 +158,9 @@ async def scrape_lotuss_scroller(shop_url_list: list) -> pl.DataFrame:
                 else:
                     promotion_price = None
 
-                orig_elem = prod.find("div", class_="mui-style-f59hd5")
+                orig_elem = prod.find(
+                    "div", class_=lambda c: c and ("mui-style-f59hd5" in c or "mui-style-4bdmr1" in c or "mui-style-1opqjiq" in c)
+                ) or prod.find("div", class_="mui-style-f59hd5") or prod.find("div", class_="mui-style-4bdmr1")
                 if orig_elem:
                     raw_orig = (
                         orig_elem.text.replace(',', '')
@@ -247,11 +256,11 @@ async def scrape_lotuss_watchlist_sequential(urls: list) -> pl.DataFrame:
                     return None, False
 
                 current_price_elem = soup.find(
-                    "div", class_="mui-style-kbur42"
-                )
+                    "div", class_=lambda c: c and "mui-style-kbur42" in c
+                ) or soup.find("div", class_="mui-style-kbur42")
                 crossed_price_elem = soup.find(
-                    "div", class_="mui-style-1opqjiq"
-                )
+                    "div", class_=lambda c: c and ("mui-style-4bdmr1" in c or "mui-style-1opqjiq" in c)
+                ) or soup.find("div", class_="mui-style-4bdmr1") or soup.find("div", class_="mui-style-1opqjiq")
 
                 raw_current = (
                     current_price_elem.get_text()

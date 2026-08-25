@@ -10,6 +10,7 @@ import sys
 import re
 import time
 import json
+import random
 import datetime
 from datetime import date
 from pathlib import Path
@@ -219,7 +220,14 @@ def extract_watchlist_item(page_result, url: str) -> dict:
     # 2. Fallback to HTML selectors if JSON was missing or incomplete
     if not name:
         name_elem = page_result.css('h1::text').get() or page_result.css('title::text').get()
-        name = name_elem.split(" - Big C")[0].strip() if name_elem else None
+        if name_elem:
+            clean_title = name_elem.split(" - Big C")[0].strip()
+            # Filter out domain names or bot/challenge pages
+            if clean_title.lower() not in [
+                "www.bigc.co.th", "big c online", "just a moment...",
+                "attention required", "access denied", "robot", "security check"
+            ]:
+                name = clean_title
 
     # Collect spans only in the main product section (stop before description/brand/related products)
     all_spans = page_result.css('main span::text').getall()
@@ -299,6 +307,14 @@ def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
 def scrape_catalog(max_pages: int = None) -> list[dict]:
     """Scrapes product listing pages."""
     all_data = []
+    en_cookies = [
+        {'name': 'language', 'value': 'en', 'domain': '.bigc.co.th', 'path': '/'},
+        {'name': 'NEXT_LOCALE', 'value': 'en', 'domain': '.bigc.co.th', 'path': '/'}
+    ]
+    en_headers = {
+        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
     for base_url in URLS:
         page = 1
         while True:
@@ -308,7 +324,14 @@ def scrape_catalog(max_pages: int = None) -> list[dict]:
             url = base_url.format(page=page) if "{page}" in base_url else base_url
             print(f"[*] Fetching: {url}")
             try:
-                page_result = StealthyFetcher.fetch(url, headless=True, network_idle=True)
+                page_result = StealthyFetcher.fetch(
+                    url,
+                    headless=True,
+                    network_idle=True,
+                    timeout=60000,
+                    cookies=en_cookies,
+                    headers=en_headers
+                )
                 containers = page_result.css(PRODUCT_CARD_SELECTOR)
                 if not containers:
                     print(f"    -> No product cards found on page {page}. Category complete.")
@@ -327,20 +350,102 @@ def scrape_catalog(max_pages: int = None) -> list[dict]:
             page += 1
     return all_data
 
-def scrape_watchlist(urls: list[str], delay: int = 1) -> list[dict]:
-    """Iterates through a list of individual product URLs and scrapes their details."""
+# ----------------------------------------------------------------------
+# RETRY & COOLDOWN SETTINGS (Infinite Queue / Tops Scraper Style)
+# ----------------------------------------------------------------------
+CF_COOLDOWN_BASE = 15      # Base cooldown between failed retries (seconds)
+CF_COOLDOWN_STEP = 10      # Escalation per failed attempt
+CF_COOLDOWN_MAX = 60       # Maximum cooldown cap
+
+PRE_REQUEST_DELAY_MIN = 2  # Min wait before opening each URL
+PRE_REQUEST_DELAY_MAX = 5  # Max wait before opening each URL
+
+def calc_cooldown(attempt: int) -> int:
+    """Progressive backoff: 15s -> 25s -> 35s -> ... capped at 60s."""
+    return min(CF_COOLDOWN_BASE + (attempt - 1) * CF_COOLDOWN_STEP, CF_COOLDOWN_MAX)
+
+def scrape_watchlist(urls: list[str]) -> list[dict]:
+    """
+    Unlimited Queue Scraper (matching tops_scraper style).
+    Continuously re-queues failed URLs until all items succeed.
+    Prioritizes complete data capture over speed.
+    """
     scraped_data = []
+    queue = [(url, 1) for url in urls]
+    successful_urls = set()
     total = len(urls)
-    for i, url in enumerate(urls, 1):
-        print(f"[*] [{i}/{total}] Fetching Watchlist Item: {url.split('/product/')[-1]}")
+
+    print(f"\nStarting UNLIMITED Watchlist scrape for {total} products...")
+    print("Strategy: Success-First. Infinite retry queue with adaptive backoff.\n")
+
+    total_attempts_cap = len(urls) * 15
+    total_attempts = 0
+
+    en_cookies = [
+        {'name': 'language', 'value': 'en', 'domain': '.bigc.co.th', 'path': '/'},
+        {'name': 'NEXT_LOCALE', 'value': 'en', 'domain': '.bigc.co.th', 'path': '/'}
+    ]
+    en_headers = {
+        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
+
+    while queue and total_attempts < total_attempts_cap:
+        total_attempts += 1
+        current_url, attempt = queue.pop(0)
+
+        # Preventive polite delay BEFORE opening URL
+        pre_wait = random.uniform(PRE_REQUEST_DELAY_MIN, PRE_REQUEST_DELAY_MAX)
+        print(f"Preparing next request in {pre_wait:.1f}s (human-like pause)...")
+        time.sleep(pre_wait)
+
+        url_short = current_url.split('/product/')[-1]
+        print(f"Fetching [{len(successful_urls)}/{total}]: {url_short} (Attempt {attempt}) | Remaining in queue: {len(queue) + 1}")
+
+        success = False
         try:
-            page_result = StealthyFetcher.fetch(url, headless=True, network_idle=True)
-            item_data = extract_watchlist_item(page_result, url)
-            if item_data["product_name"]:
+            page_result = StealthyFetcher.fetch(
+                current_url,
+                headless=True,
+                network_idle=True,
+                timeout=60000,
+                cookies=en_cookies,
+                headers=en_headers
+            )
+            item_data = extract_watchlist_item(page_result, current_url)
+            if item_data and item_data.get("product_name") and (item_data.get("original_price") or item_data.get("promotion_price")):
                 scraped_data.append(item_data)
+                successful_urls.add(current_url)
+                promo_display = f" | Promo: {item_data['condition']}" if item_data.get("condition") else ""
+                print(f"  [+] Success: {item_data['product_name'][:50]}{promo_display}")
+                success = True
+            else:
+                print(f"  [!] Blocked or incomplete response for {url_short}")
         except Exception as e:
-            print(f"    [!] Error fetching {url}: {e}")
-        time.sleep(delay)
+            print(f"  [!] Error on attempt {attempt}: {str(e)[:80]}")
+
+        # Progressive backoff on failure
+        if not success:
+            queue.append((current_url, attempt + 1))
+            cf_wait = calc_cooldown(attempt)
+            if len(queue) == 1:
+                cf_wait = max(cf_wait, 30)
+                print(f"  [!] Failed. 1 item left in queue. Heavy cooldown: {cf_wait}s\n")
+            elif len(queue) <= 3:
+                cf_wait = max(cf_wait, 20)
+                print(f"  [!] Failed. Small queue. Cooldown: {cf_wait}s\n")
+            else:
+                jitter = random.uniform(0, 3)
+                cf_wait = cf_wait + jitter
+                print(f"  [!] Failed. Attempt {attempt} cooldown: {cf_wait:.1f}s\n")
+            time.sleep(cf_wait)
+        else:
+            wait_time = random.uniform(2, 4)
+            if queue:
+                print(f"  [+] Waiting {wait_time:.1f}s before next item...\n")
+                time.sleep(wait_time)
+
+    print(f"\n[✓] Watchlist complete: {len(successful_urls)}/{total} successful.")
     return scraped_data
 
 # ----------------------------------------------------------------------
