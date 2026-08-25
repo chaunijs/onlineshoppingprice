@@ -9,16 +9,17 @@ on:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: Install System Dependencies (Tesseract OCR)
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-tha
-
+          
       - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
@@ -44,7 +45,7 @@ jobs:
       - name: Set artifact name with execution day
         if: always()
         run: |
-          echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+          echo "artifact_name=scraper-pipeline-outputs-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Archive Run Artifacts (Excel / Logs)
         if: always()
