@@ -6,6 +6,7 @@ Fetches product catalog and watchlist data, processes the data with Polars, and 
 """
 
 import os
+import sys
 import re
 import time
 import json
@@ -15,6 +16,12 @@ from pathlib import Path
 import concurrent.futures
 import polars as pl
 from scrapling.fetchers import StealthyFetcher
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # ----------------------------------------------------------------------
 # CONFIGURATION & OUTPUT DIRECTORY
@@ -86,6 +93,79 @@ def clean_price(value: str) -> str:
         return None
     return value.replace("฿", "").replace(",", "").strip()
 
+def clean_condition(candidates: list[str] | str) -> str | None:
+    """
+    Extracts and normalizes the single highest-priority promotional condition.
+    Filters out boilerplate disclaimers, delivery tags, units, and noise.
+    Priority:
+      1. Buy X Get Y (e.g., Buy 1 Get 1)
+      2. Buy X Cheaper (e.g., Buy 2 Cheaper)
+      3. Super Save
+      4. Red Hot
+      5. Online Exclusive
+    """
+    if not candidates:
+        return None
+
+    if isinstance(candidates, str):
+        candidates = [s.strip() for s in candidates.split("|")]
+
+    cleaned_candidates = []
+    for c in candidates:
+        if not c:
+            continue
+        s = c.strip()
+        if not s or s == '฿' or s.startswith('-') or s.startswith('*'):
+            continue
+        if len(s) > 60:
+            continue
+        if any(noise in s.lower() for noise in [
+            "the company reserves", "prior notice", "packaging", "illustration",
+            "nextday", "next day", "pickup", "express", "donation", "shipping",
+            "previous slide", "next slide", "add to cart", "share", "promotions",
+            "expire", "id:", "brand", "category", "fda", "coupon", "disc",
+            "shop over", "t&c", "collect", "readmore", "related products",
+            "/ piece", "/ pack", "/ bag", "/ bottle", "/ box", "/ can", "/ unit"
+        ]):
+            continue
+        cleaned_candidates.append(s)
+
+    # 1. Buy X Get Y (Highest priority)
+    for c in cleaned_candidates:
+        match = re.search(r'(?i)buy\s*(\d+)\s*(?:piece|item|bottle|pack|bag)?\s*get\s*(\d+)', c)
+        if match:
+            return f"Buy {match.group(1)} Get {match.group(2)}"
+        thai_match = re.search(r'(\d+)\s*แถม\s*(\d+)', c)
+        if thai_match:
+            return f"Buy {thai_match.group(1)} Get {thai_match.group(2)}"
+        if any(k in c.lower() for k in ["buy 1 get 1", "1 แถม 1", "1 get 1", "buy 1 get"]):
+            return "Buy 1 Get 1"
+
+    # 2. Buy X Cheaper
+    for c in cleaned_candidates:
+        match = re.search(r'(?i)buy\s*(\d+)\s*cheaper', c)
+        if match:
+            return f"Buy {match.group(1)} Cheaper"
+        if "cheaper" in c.lower():
+            return "Buy 2 Cheaper"
+
+    # 3. Super Save
+    for c in cleaned_candidates:
+        if any(k in c.lower() for k in ["super save", "supersave", "ประหยัด"]):
+            return "Super Save"
+
+    # 4. Red Hot
+    for c in cleaned_candidates:
+        if "red hot" in c.lower():
+            return "Red Hot"
+
+    # 5. Online Exclusive
+    for c in cleaned_candidates:
+        if "online exclusive" in c.lower():
+            return "Online Exclusive"
+
+    return None
+
 def extract_product(item) -> dict:
     """Extract one product's fields from a single card element."""
     name = item.css('p[class*="line-clamp-2"]::text').get()
@@ -99,16 +179,9 @@ def extract_product(item) -> dict:
     # 2. Original Price
     original_price = item.css('div[class*="line-through"]::text').get()
 
-    # 3. Badges / Conditions (Excludes Nextday / delivery tags)
+    # 3. Badges / Conditions (Excludes Nextday / delivery tags / disclaimers)
     condition_spans = item.css('a div span::text').getall()
-    conditions = [
-        s.strip() for s in condition_spans 
-        if s.strip() 
-        and s.strip() != '฿' 
-        and not s.strip().startswith('-') 
-        and s.strip().lower() not in ["nextday", "next day"]
-    ]
-    condition = " | ".join(list(dict.fromkeys(conditions))) if conditions else None
+    condition = clean_condition(condition_spans)
 
     return {
         "product_name": name.strip() if name else None,
@@ -131,14 +204,15 @@ def extract_watchlist_item(page_result, url: str) -> dict:
             
             if product:
                 name = product.get("name") or product.get("title")
-                promo_price = product.get("final_price") or product.get("special_price") or product.get("price")
+                promo_price = product.get("final_price") or product.get("special_price")
                 orig_price = product.get("price") or product.get("original_price")
                 if promo_price == orig_price:
                     promo_price = None
                 
                 badges = product.get("badges") or product.get("promotions") or []
                 if isinstance(badges, list):
-                    condition = " | ".join([b.get("label", "") for b in badges if isinstance(b, dict) and b.get("label")])
+                    labels = [b.get("label", "") for b in badges if isinstance(b, dict) and b.get("label")]
+                    condition = clean_condition(labels)
     except Exception:
         pass
 
@@ -147,24 +221,32 @@ def extract_watchlist_item(page_result, url: str) -> dict:
         name_elem = page_result.css('h1::text').get() or page_result.css('title::text').get()
         name = name_elem.split(" - Big C")[0].strip() if name_elem else None
 
-    if not promo_price:
-        all_text = " ".join(page_result.css('body ::text').getall())
-        price_matches = re.findall(r'฿\s*([\d,]+(?:\.\d+)?)', all_text)
-        if price_matches:
-            promo_price = price_matches[0].replace(",", "").strip()
-            if len(price_matches) > 1 and float(price_matches[1].replace(",", "")) > float(promo_price):
-                orig_price = price_matches[1].replace(",", "").strip()
+    # Collect spans only in the main product section (stop before description/brand/related products)
+    all_spans = page_result.css('main span::text').getall()
+    header_spans = []
+    for s in all_spans:
+        s_clean = s.strip()
+        if s_clean.startswith('*') or s_clean in ['Related products', 'Product description', 'Product Description', 'Readmore', 'Brand', 'Category']:
+            break
+        header_spans.append(s_clean)
+
+    if not promo_price and not orig_price:
+        prices = []
+        for s in header_spans:
+            clean_s = s.replace("฿", "").replace(",", "").strip()
+            if re.match(r'^\d+(?:\.\d+)?$', clean_s):
+                if not s.startswith('-') and not s.endswith('%'):
+                    prices.append(clean_s)
+
+        if len(prices) == 1:
+            orig_price = prices[0]
+            promo_price = None
+        elif len(prices) >= 2:
+            promo_price = prices[0]
+            orig_price = prices[1]
 
     if not condition:
-        badge_spans = page_result.css('main span::text').getall()
-        valid_badges = [
-            b.strip() for b in badge_spans 
-            if b.strip() and b.strip() != '฿' 
-            and not b.strip().startswith('-') 
-            and b.strip().lower() not in ["nextday", "next day", "pickup", "express", "add to cart", "share"]
-        ]
-        promo_words = [b for b in valid_badges if any(k in b.lower() for k in ["save", "get", "free", "pack", "disc", "off", "deal"])]
-        condition = " | ".join(list(dict.fromkeys(promo_words))) if promo_words else None
+        condition = clean_condition(header_spans)
 
     return {
         "product_name": name.strip() if name else None,
@@ -275,7 +357,7 @@ def main():
 
     if catalog_rows:
         df_catalog_raw = pl.DataFrame(catalog_rows).unique()
-        print(f"[✓] Scraped {len(df_catalog_raw)} unique catalog items.")
+        print(f"[+] Scraped {len(df_catalog_raw)} unique catalog items.")
         df_catalog_clean = df_catalog_raw.select([
             pl.col("product_name").alias("name"),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
@@ -296,7 +378,7 @@ def main():
 
     if watchlist_rows:
         df_watchlist_raw = pl.DataFrame(watchlist_rows).unique()
-        print(f"[✓] Scraped {len(df_watchlist_raw)} unique watchlist items.")
+        print(f"[+] Scraped {len(df_watchlist_raw)} unique watchlist items.")
         df_watchlist_clean = df_watchlist_raw.select([
             pl.col("product_name").alias("name"),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
@@ -328,15 +410,15 @@ def main():
     print("\n--- 4. Exporting Excel Files ---")
     catalog_file = OUTPUT_DIR / f"big_c_{today_date}.xlsx"
     df_trans_big_c.write_excel(str(catalog_file))
-    print(f"✅ Saved catalog output: {catalog_file}")
+    print(f"[+] Saved catalog output: {catalog_file}")
 
     search_file = OUTPUT_DIR / f"big_c_search_result_{today_date}.xlsx"
     search_results_df.write_excel(str(search_file))
-    print(f"✅ Saved search output: {search_file}")
+    print(f"[+] Saved search output: {search_file}")
 
     watchlist_file = OUTPUT_DIR / f"big_c_watchlist_{today_date}.xlsx"
     df_trans_watchlist.write_excel(str(watchlist_file))
-    print(f"✅ Saved watchlist output: {watchlist_file}")
+    print(f"[+] Saved watchlist output: {watchlist_file}")
 
     print("\n=== Scraper completed successfully ===")
 

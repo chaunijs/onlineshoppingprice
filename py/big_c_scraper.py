@@ -94,23 +94,23 @@ def get_condition_from_text(raw_text: str):
     digits = re.findall(r'\d', t)
     n = digits[0] if digits else ""
 
-    # Supersave
-    if any(k in t for k in ["SUPERSAVE", "SAVE", "ประหยัด"]):
-        return "Supersave"
-
-    # Buy N Get 1
+    # Buy N Get 1 (Priority over general save)
     if any(k in t for k in ["GET", "แถม"]):
         if n:
             if n == "1" or "1แถม1" in t or "1GET1" in t:
                 return "Buy 1 Get 1"
             return f"Buy {n} Get 1"
-        return "Buy 1 Get"
+        return "Buy 1 Get 1"
 
     # Buy N Cheaper
     if "CHEAPER" in t:
         if n:
             return f"Buy {n} Cheaper"
         return "Buy 2 Cheaper"
+
+    # Supersave
+    if any(k in t for k in ["SUPERSAVE", "SAVE", "ประหยัด"]):
+        return "Super Save"
 
     return raw_text.strip() if raw_text.strip() else None
 

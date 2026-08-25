@@ -2,13 +2,14 @@ name: Online Price Scraper Pipeline
 
 on:
   schedule:
-   # Runs at 11:00 Thailand time (ICT) on Monday (1), Wednesday (3), and Friday (5)
+    # Runs at 11:00 Thailand time (ICT) on Monday (1), Wednesday (3), and Friday (5)
     - cron: '0 4 * * *'
   workflow_dispatch:
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository Code
         uses: actions/checkout@v4
@@ -41,17 +42,14 @@ jobs:
           python orchestrator.py
 
       - name: Set artifact name with execution day
-        id: set-artifact-name
         if: always()
         run: |
           echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
-          # or if using step outputs:
-          # echo "artifact_name=scraper-data-$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
       - name: Archive Run Artifacts (Excel / Logs)
-        if: always() 
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.set_artifact_name.outputs.artifact_name }}
+          name: ${{ env.artifact_name }}
           path: py/output/
           retention-days: 7
