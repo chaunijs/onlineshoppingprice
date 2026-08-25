@@ -52,6 +52,6 @@ jobs:
         if: always() 
         uses: actions/upload-artifact@v4
         with:
-          name: scraping-pipeline-outputs
+          name: ${{ steps.set_artifact_name.outputs.artifact_name }}
           path: py/output/
           retention-days: 7
