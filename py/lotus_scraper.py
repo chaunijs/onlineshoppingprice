@@ -418,10 +418,10 @@ def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
 # ---------------------------------------------------------------------
 catalog_urls = [
     "https://www.lotuss.com/en/category/household-and-merits/86590-laundry-supplies"
-    "?sort=relevance:DESC&filter.brandId=21490,21430,21829,22054,23485",
+    "?sort=relevance:DESC",
 
     "https://www.lotuss.com/en/category/household-and-merits/86590-cleaning-chemical"
-    "?sort=relevance:DESC&filter.categoryId=87100&filter.brandId=22327,24049",
+    "?sort=relevance:DESC&filter.categoryId=87100",
 ]
 
 watchlist_urls = [
