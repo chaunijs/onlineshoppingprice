@@ -4,20 +4,19 @@ import subprocess
 import traceback
 
 scripts = [
-    "py/scraper/7_eleven_scraper.py",
-    "py/scraper/makro_scraper.py",
-    "py/scraper/new_big_c_scraper.py",
-    "py/scraper/lotus_scraper.py",
-    "py/scraper/tops_scraper.py",
+    "py/product_name/7-eleven_product_name.py",
+    "py/product_name/bigc_product_name.py",
+    "py/product_name/lotus_product_name.py",
+    "py/product_name/makro_product_name.py",
 ]
 
-print("🚀 Starting Sequential Scraper Pipeline...")
+print("🚀 Starting Sequential Product Name Extraction Pipeline...")
 failed_jobs = []
 
 for script_path in scripts:
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print(f"▶️ RUNNING: {script_path}")
-    print("="*50)
+    print("=" * 50)
     
     try:
         result = subprocess.run(
@@ -41,9 +40,9 @@ for script_path in scripts:
         failed_jobs.append({"script": script_path, "error": str(e)})
         print("⏭️ Skipping to next script...")
 
-print("\n" + "="*50)
-print("🏁 PIPELINE RUN COMPLETE SUMMARY")
-print("="*50)
+print("\n" + "=" * 50)
+print("🏁 PRODUCT NAME PIPELINE RUN COMPLETE SUMMARY")
+print("=" * 50)
 if failed_jobs:
     print(f"⚠️ Done, but {len(failed_jobs)} job(s) failed:")
     for failure in failed_jobs:
@@ -51,4 +50,4 @@ if failed_jobs:
     
     sys.exit(1)
 else:
-    print("🎉 All scripts executed successfully with zero errors!")
+    print("🎉 All product name scripts executed successfully with zero errors!")
