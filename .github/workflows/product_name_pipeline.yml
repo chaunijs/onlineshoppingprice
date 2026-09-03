@@ -1,9 +1,9 @@
-name: Tops Category Scraper Pipeline
+name: Online Retailer Product Name Extraction Pipeline
 
 on:
   schedule:
-    # Runs at 12:00 Thailand time (ICT) on Monday (1), Wednesday (3), and Friday (5)
-    - cron: '0 7 * * *'
+    # Runs at 13:00 Thailand time (ICT / UTC+7) from Monday to Friday (1-5) -> 06:00 UTC
+    - cron: '0 6 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -29,26 +29,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Playwright & Patchright Browsers
+      - name: Install Playwright Browsers
         run: |
           playwright install chromium
           playwright install-deps
-          patchright install chromium
-          patchright install-deps
 
-      - name: Run Tops Category Scraper
+      - name: Run Product Name Orchestrator
         run: |
-          python py/scraper/tops_category_scraper.py
+          python product_name_orches.py
 
       - name: Set artifact name with execution day
         if: always()
         run: |
-          echo "artifact_name=tops-category-outputs-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+          echo "artifact_name=product-name-outputs-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
 
-      - name: Archive Run Artifacts (Excel / Logs)
+      - name: Archive Run Artifacts (Excel / CSV)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.artifact_name }}
-          path: py/output/
+          path: output/
           retention-days: 7

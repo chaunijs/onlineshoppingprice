@@ -1,4 +1,8 @@
 py/output/*
+py/scraper/output/*
+output/*.xlsx
+output/*.xls
+output/*.xlsm
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
