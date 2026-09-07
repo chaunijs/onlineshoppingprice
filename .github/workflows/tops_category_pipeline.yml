@@ -50,5 +50,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.artifact_name }}
-          path: py/output/
+          path: py/scraper/output/
           retention-days: 7
