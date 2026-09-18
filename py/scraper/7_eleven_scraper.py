@@ -13,6 +13,7 @@ Changelog:
 """
 
 import os
+import sys
 import time
 import re
 import datetime
@@ -35,6 +36,18 @@ from selenium.webdriver.support import expected_conditions as EC
 # Configuration
 # ---------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from py.supabase_sink import sink_to_supabase
+except ImportError:
+    try:
+        from supabase_sink import sink_to_supabase
+    except ImportError:
+        sink_to_supabase = None
+
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -311,13 +324,22 @@ def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+CATALOG_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition"
+]
+
+WATCHLIST_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition", "url"
+]
+
+
 def parse_product_names_TH(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
     """
     Standardizes product name parsing for Thai supermarket data.
-    Extracts Brand, Volume, Unit, Pack size, and Retailer.
+    Extracts brand, volume, unit, pack size, retailer, date.
     """
-    today_str = date.today().strftime("%Y-%m-%d")
-
     quant_unit_pattern = r"(?i)([\d,.]+)\s*(มล\.|ลิตร|ก\.ก\.|กรัม|ML|G|KG|L)"
 
     pack_pattern = (
@@ -329,32 +351,48 @@ def parse_product_names_TH(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
     thai_brands = ["ไฟน์ไลน์", "ไฮยีน", "เปา", "แอทแทค", "ไลปอนเอฟ"]
     brand_pattern = r"^(" + "|".join(re.escape(b) for b in thai_brands) + r")"
 
-    return df.with_columns([
-        pl.lit(None).alias("condition"),
-        pl.lit(today_str).alias("Date"),
+    res = df.with_columns([
+        pl.lit(today_date).cast(pl.String).alias("date"),
+        pl.lit(shop_name).cast(pl.String).alias("retailer"),
 
         pl.col("name")
           .str.extract(brand_pattern, 1)
           .fill_null(pl.col("name").str.split(" ").list.first())
-          .alias("Brand"),
+          .cast(pl.String)
+          .alias("brand"),
+
+        pl.col("name").cast(pl.String).alias("name"),
 
         pl.col("name")
           .str.extract(quant_unit_pattern, 1)
           .str.replace_all(",", "")
           .cast(pl.Float64, strict=False)
-          .alias("Volume"),
+          .alias("volume"),
 
         pl.col("name")
           .str.extract(quant_unit_pattern, 2)
-          .alias("Unit"),
+          .cast(pl.String)
+          .alias("unit"),
 
         pl.col("name")
           .str.extract(pack_pattern, 0)
           .str.to_uppercase()
-          .alias("Pack"),
+          .cast(pl.String)
+          .alias("pack"),
 
-        pl.lit(shop_name).alias("Retailer"),
+        pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
+        pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
     ])
+
+    if "condition" not in res.columns:
+        res = res.with_columns(pl.lit(None).cast(pl.String).alias("condition"))
+    else:
+        res = res.with_columns(pl.col("condition").cast(pl.String).alias("condition"))
+
+    if "url" in res.columns:
+        res = res.with_columns(pl.col("url").cast(pl.String).alias("url"))
+
+    return res
 
 
 # ---------------------------------------------------------------------
@@ -443,34 +481,45 @@ def main():
     print(df_watchlist)
 
     cols_sel = ["name", "promotion_price", "original_price", "condition"]
-    df_watchlist_sel = df_watchlist.select(cols_sel) if not df_watchlist.is_empty() else pl.DataFrame()
+    df_watchlist_sel = (
+        df_watchlist.select(cols_sel + ["url"])
+        if not df_watchlist.is_empty() and "url" in df_watchlist.columns
+        else (df_watchlist.select(cols_sel) if not df_watchlist.is_empty() else pl.DataFrame())
+    )
 
     # ---------- Combine (toggle here) ----------
     just_watchlist = True
 
     if just_watchlist:
-        df_combined_sel = df_watchlist_sel
+        df_combined_sel = df_watchlist.select(cols_sel) if not df_watchlist.is_empty() else pl.DataFrame()
     else:
-        df_combined_sel = df_combined_7eleven.select(cols_sel)
-        df_combined_sel = pl.concat([df_combined_sel, df_watchlist_sel])
+        df_combined_sel = df_combined_7eleven.select(cols_sel) if not df_combined_7eleven.is_empty() else pl.DataFrame()
+        if not df_watchlist.is_empty():
+            df_combined_sel = pl.concat([df_combined_sel, df_watchlist.select(cols_sel)])
 
     # ---------- Data Prep ----------
     if not df_combined_sel.is_empty():
         df_prep = re_evaluate_price(df_combined_sel)
-        df_trans = parse_product_names_TH(df_prep.unique(), "7-Eleven")
+        df_trans = parse_product_names_TH(df_prep.unique(), "7-Eleven").select(CATALOG_COLUMNS)
 
         output_file = OUTPUT_DIR / f"7_eleven_laundry_dish_{today_date}.xlsx"
         df_trans.write_excel(str(output_file))
         print(f"\n✅ Saved main output: {output_file}")
 
+        if sink_to_supabase:
+            sink_to_supabase(df_trans, "price_catalog")
+
     # ---------- Watchlist Output ----------
     if not df_watchlist_sel.is_empty():
         df_prep_watchlist = re_evaluate_price(df_watchlist_sel)
-        df_trans_watchlist = parse_product_names_TH(df_prep_watchlist.unique(), "7-Eleven")
+        df_trans_watchlist = parse_product_names_TH(df_prep_watchlist.unique(), "7-Eleven").select(WATCHLIST_COLUMNS)
 
         watchlist_file = OUTPUT_DIR / f"7_eleven_watchlist_{today_date}.xlsx"
         df_trans_watchlist.write_excel(str(watchlist_file))
         print(f"✅ Saved watchlist output: {watchlist_file}")
+
+        if sink_to_supabase:
+            sink_to_supabase(df_trans_watchlist, "watchlist")
 
     print("\n" + "=" * 60)
     print("Scraping completed.")

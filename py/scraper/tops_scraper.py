@@ -17,6 +17,7 @@ Changelog:
 """
 
 import os
+import sys
 import asyncio
 import random
 import datetime
@@ -32,6 +33,18 @@ from patchright.async_api import async_playwright
 # Configuration
 # ---------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from py.supabase_sink import sink_to_supabase
+except ImportError:
+    try:
+        from supabase_sink import sink_to_supabase
+    except ImportError:
+        sink_to_supabase = None
+
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -414,6 +427,7 @@ async def scrape_tops_watchlist_unlimited(urls: list) -> pl.DataFrame:
 
                     if name and "tops.co.th" not in name.lower():
                         extracted_data.append({
+                            "url": current_url,
                             "name": name,
                             "promotion_price": promo,
                             "original_price": orig,
@@ -464,8 +478,7 @@ async def scrape_tops_watchlist_unlimited(urls: list) -> pl.DataFrame:
         print("\nNo data collected.")
         return pl.DataFrame()
 
-    df_raw = pl.DataFrame(extracted_data)
-    return process_tops_data(df_raw)
+    return pl.DataFrame(extracted_data)
 # ---------------------------------------------------------------------
 # Final Transformation
 # ---------------------------------------------------------------------
@@ -492,10 +505,19 @@ def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
-    """Extract Brand, Volume, Unit, Pack, Retailer from product name."""
-    today_str = date.today().strftime("%Y-%m-%d")
+CATALOG_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition"
+]
 
+WATCHLIST_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition", "url"
+]
+
+
+def parse_product_names(df: pl.DataFrame, shop_name: str = "Tops") -> pl.DataFrame:
+    """Extract brand, volume, unit, pack, retailer, date from product name."""
     quant_unit_pattern = r"(?i)([\d.]+)\s*(ML|G|KG|L|LTR|LITERS?|GRAMS?)"
 
     pack_pattern = (
@@ -505,21 +527,27 @@ def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
     )
 
     return df.with_columns(
-        pl.lit(today_str).alias("Date"),
-        pl.col("name").str.split(" ").list.first().alias("Brand"),
+        pl.lit(today_date).cast(pl.String).alias("date"),
+        pl.lit(shop_name).cast(pl.String).alias("retailer"),
+        pl.col("name").str.split(" ").list.first().cast(pl.String).alias("brand"),
+        pl.col("name").cast(pl.String).alias("name"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 1)
           .cast(pl.Float64, strict=False)
-          .alias("Volume"),
+          .alias("volume"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 2)
           .str.to_uppercase()
-          .alias("Unit"),
+          .cast(pl.String)
+          .alias("unit"),
         pl.col("name")
           .str.extract(pack_pattern, 1)
           .str.to_uppercase()
-          .alias("Pack"),
-        pl.lit(shop_name).alias("Retailer")
+          .cast(pl.String)
+          .alias("pack"),
+        pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
+        pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
+        pl.col("condition").cast(pl.String).alias("condition"),
     )
 
 
@@ -577,21 +605,26 @@ async def run_pipeline():
 
     # ---------- Transform + Save ----------
     df_prep_watchlist = re_evaluate_price(df_watchlist_results)
-    df_trans_watchlist = parse_product_names(df_prep_watchlist, "Tops")
+    df_trans_watchlist = parse_product_names(df_prep_watchlist, "Tops").select(WATCHLIST_COLUMNS)
 
     watchlist_file = OUTPUT_DIR / f"tops_watchlists_{today_date}.xlsx"
     df_trans_watchlist.unique().write_excel(str(watchlist_file))
     print(f"\n✅ Saved watchlist output: {watchlist_file}")
+
+    if sink_to_supabase and not df_trans_watchlist.is_empty():
+        sink_to_supabase(df_trans_watchlist.unique(), "watchlist")
 
     # ---------- Optional: Full Catalog (uncomment to enable) ----------
     # print("\n--- Scraping Category Catalog ---")
     # tops_df = await scrape_tops_multi_url(urls_to_scrape)
     # if not tops_df.is_empty():
     #     df_prep_cat = re_evaluate_price(tops_df)
-    #     df_trans_cat = parse_product_names(df_prep_cat, "Tops")
+    #     df_trans_cat = parse_product_names(df_prep_cat, "Tops").select(CATALOG_COLUMNS)
     #     catalog_file = OUTPUT_DIR / f"tops_catalog_{today_date}.xlsx"
     #     df_trans_cat.unique().write_excel(str(catalog_file))
     #     print(f"✅ Saved catalog output: {catalog_file}")
+    #     if sink_to_supabase:
+    #         sink_to_supabase(df_trans_cat.unique(), "price_catalog")
 
     print("\n" + "=" * 60)
     print("Scraping completed.")

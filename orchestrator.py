@@ -9,6 +9,12 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 if hasattr(sys.stderr, "reconfigure"):
     try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")

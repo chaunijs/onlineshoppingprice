@@ -18,16 +18,22 @@ import concurrent.futures
 import polars as pl
 from scrapling.fetchers import StealthyFetcher
 
-if hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
 # ----------------------------------------------------------------------
 # CONFIGURATION & OUTPUT DIRECTORY
 # ----------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from py.supabase_sink import sink_to_supabase
+except ImportError:
+    try:
+        from supabase_sink import sink_to_supabase
+    except ImportError:
+        sink_to_supabase = None
+
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -185,7 +191,7 @@ def extract_product(item) -> dict:
     condition = clean_condition(condition_spans)
 
     return {
-        "product_name": name.strip() if name else None,
+        "name": name.strip() if name else None,
         "promotion_price": clean_price(promotion_price),
         "original_price": clean_price(original_price),
         "condition": condition,
@@ -257,7 +263,8 @@ def extract_watchlist_item(page_result, url: str) -> dict:
         condition = clean_condition(header_spans)
 
     return {
-        "product_name": name.strip() if name else None,
+        "url": url,
+        "name": name.strip() if name else None,
         "promotion_price": str(promo_price) if promo_price is not None else None,
         "original_price": str(orig_price) if orig_price is not None else None,
         "condition": condition
@@ -266,6 +273,16 @@ def extract_watchlist_item(page_result, url: str) -> dict:
 # ----------------------------------------------------------------------
 # DATA TRANSFORMATION UDFs
 # ----------------------------------------------------------------------
+CATALOG_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition"
+]
+
+WATCHLIST_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition", "url"
+]
+
 def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
     """Standardizes pricing logic."""
     return (
@@ -284,21 +301,25 @@ def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
-    """Standardizes columns, extracts Brand, Volume, Unit, Pack size, and Retailer."""
+    """Standardizes columns, extracts brand, volume, unit, pack size, retailer, and date."""
     quant_unit_pattern = r"(?i)([\d.]+)\s*(ML|G|KG|L|GRAMS?)"
     pack_pattern = r"(?i)(PACK\s*\d*\s*FREE\s*\d+|PACK\s*\d*\s*\+\s*\d+|PACK\s*\d+|TWINPACK|\bX\s*\d+\b|P?\d+\s*\+\s*\d+|\(\d+\+\d+\)|\d+\s*FREE\s*\d+|\bPACK\b)"
     
     return df.with_columns(
-        pl.lit(today_date).alias("Date"),
-        pl.col("name").str.split(" ").list.first().alias("Brand"),
+        pl.lit(today_date).cast(pl.String).alias("date"),
+        pl.lit(shop_name).cast(pl.String).alias("retailer"),
+        pl.col("name").str.split(" ").list.first().cast(pl.String).alias("brand"),
+        pl.col("name").cast(pl.String).alias("name"),
         pl.col("name")
             .str.extract(quant_unit_pattern, 1)
             .str.replace_all(",", "")
-            .cast(pl.Int64, strict=False)
-            .alias("Volume"),
-        pl.col("name").str.extract(quant_unit_pattern, 2).str.to_uppercase().alias("Unit"),
-        pl.col("name").str.extract(pack_pattern, 1).str.to_uppercase().alias("Pack"),
-        pl.lit(shop_name).alias("Retailer")
+            .cast(pl.Float64, strict=False)
+            .alias("volume"),
+        pl.col("name").str.extract(quant_unit_pattern, 2).str.to_uppercase().cast(pl.String).alias("unit"),
+        pl.col("name").str.extract(pack_pattern, 1).str.to_uppercase().cast(pl.String).alias("pack"),
+        pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
+        pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
+        pl.col("condition").cast(pl.String).alias("condition"),
     )
 
 # ----------------------------------------------------------------------
@@ -339,7 +360,7 @@ def scrape_catalog(max_pages: int = None) -> list[dict]:
                 print(f"    -> Found {len(containers)} products on page {page}")
                 for item in containers:
                     data = extract_product(item)
-                    if data["product_name"]:
+                    if data["name"]:
                         all_data.append(data)
             except Exception as e:
                 print(f"    [!] Error fetching catalog page {page}: {e}")
@@ -413,11 +434,11 @@ def scrape_watchlist(urls: list[str]) -> list[dict]:
                 headers=en_headers
             )
             item_data = extract_watchlist_item(page_result, current_url)
-            if item_data and item_data.get("product_name") and (item_data.get("original_price") or item_data.get("promotion_price")):
+            if item_data and item_data.get("name") and (item_data.get("original_price") or item_data.get("promotion_price")):
                 scraped_data.append(item_data)
                 successful_urls.add(current_url)
                 promo_display = f" | Promo: {item_data['condition']}" if item_data.get("condition") else ""
-                print(f"  [+] Success: {item_data['product_name'][:50]}{promo_display}")
+                print(f"  [+] Success: {item_data['name'][:50]}{promo_display}")
                 success = True
             else:
                 print(f"  [!] Blocked or incomplete response for {url_short}")
@@ -464,16 +485,16 @@ def main():
         df_catalog_raw = pl.DataFrame(catalog_rows).unique()
         print(f"[+] Scraped {len(df_catalog_raw)} unique catalog items.")
         df_catalog_clean = df_catalog_raw.select([
-            pl.col("product_name").alias("name"),
+            pl.col("name").cast(pl.String),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
             pl.col("original_price").cast(pl.Float64, strict=False),
-            pl.col("condition")
+            pl.col("condition").cast(pl.String)
         ])
         df_prep_big_c = re_evaluate_price(df_catalog_clean)
-        df_trans_big_c = parse_product_names(df_prep_big_c, "BigC")
+        df_trans_big_c = parse_product_names(df_prep_big_c, "BigC").select(CATALOG_COLUMNS)
     else:
         print("[!] No catalog rows retrieved. Initializing empty DataFrame.")
-        df_trans_big_c = pl.DataFrame()
+        df_trans_big_c = pl.DataFrame(schema={col: pl.String if col not in ["volume", "original_price", "promotion_price"] else pl.Float64 for col in CATALOG_COLUMNS})
 
     # 2. Scrape Watchlist
     print("\n--- 2. Scraping Watchlist ---")
@@ -485,13 +506,14 @@ def main():
         df_watchlist_raw = pl.DataFrame(watchlist_rows).unique()
         print(f"[+] Scraped {len(df_watchlist_raw)} unique watchlist items.")
         df_watchlist_clean = df_watchlist_raw.select([
-            pl.col("product_name").alias("name"),
+            pl.col("name").cast(pl.String),
             pl.col("promotion_price").cast(pl.Float64, strict=False),
             pl.col("original_price").cast(pl.Float64, strict=False),
-            pl.col("condition")
+            pl.col("condition").cast(pl.String),
+            pl.col("url").cast(pl.String)
         ])
         df_prep_watchlist = re_evaluate_price(df_watchlist_clean)
-        df_trans_watchlist = parse_product_names(df_prep_watchlist, "BigC")
+        df_trans_watchlist = parse_product_names(df_prep_watchlist, "BigC").select(WATCHLIST_COLUMNS)
 
         # 3. Match against search list
         print("\n--- 3. Matching Search List ---")
@@ -508,7 +530,7 @@ def main():
         ).unique()
     else:
         print("[!] No watchlist rows retrieved. Initializing empty DataFrames.")
-        df_trans_watchlist = pl.DataFrame()
+        df_trans_watchlist = pl.DataFrame(schema={col: pl.String if col not in ["volume", "original_price", "promotion_price"] else pl.Float64 for col in WATCHLIST_COLUMNS})
         search_results_df = pl.DataFrame()
 
     # 4. Save Excel Files (Matched to Lotus Scraper format)
@@ -524,6 +546,16 @@ def main():
     watchlist_file = OUTPUT_DIR / f"big_c_watchlist_{today_date}.xlsx"
     df_trans_watchlist.write_excel(str(watchlist_file))
     print(f"[+] Saved watchlist output: {watchlist_file}")
+
+    # 5. Sink to Supabase Database
+    print("\n--- 5. Sinking to Supabase Database ---")
+    if sink_to_supabase:
+        if not df_trans_big_c.is_empty():
+            sink_to_supabase(df_trans_big_c, "price_catalog")
+        if not df_trans_watchlist.is_empty():
+            sink_to_supabase(df_trans_watchlist, "watchlist")
+    else:
+        print("[Supabase] [!] Sink utility not available. Skipping DB sink.")
 
     print("\n=== Scraper completed successfully ===")
 
