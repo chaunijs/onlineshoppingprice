@@ -507,7 +507,11 @@ def main():
         print(f"\n✅ Saved main output: {output_file}")
 
         if sink_to_supabase:
-            sink_to_supabase(df_trans, "price_catalog")
+            ok = sink_to_supabase(df_trans, "price_catalog")
+            if not ok:
+                print("❌ [Supabase] Failed to sink 'price_catalog' to Supabase.")
+        else:
+            print("⚠️ [Supabase] sink_to_supabase module is not available.")
 
     # ---------- Watchlist Output ----------
     if not df_watchlist_sel.is_empty():
@@ -519,7 +523,11 @@ def main():
         print(f"✅ Saved watchlist output: {watchlist_file}")
 
         if sink_to_supabase:
-            sink_to_supabase(df_trans_watchlist, "watchlist")
+            ok = sink_to_supabase(df_trans_watchlist, "watchlist")
+            if not ok:
+                print("❌ [Supabase] Failed to sink 'watchlist' to Supabase.")
+        else:
+            print("⚠️ [Supabase] sink_to_supabase module is not available.")
 
     print("\n" + "=" * 60)
     print("Scraping completed.")

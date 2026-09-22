@@ -269,6 +269,18 @@ async def main():
         df.write_csv(csv_path)
         print(f"\n💾 Saved result to: {csv_path}")
 
+    # ---------- Sink to Supabase ----------
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+    try:
+        from py.supabase_sink import sink_to_supabase
+        if not df.is_empty():
+            sink_to_supabase(df, "product_name")
+    except Exception as e:
+        print(f"⚠️ [Supabase] Failed to sink product names: {e}")
+
     return df
 
 

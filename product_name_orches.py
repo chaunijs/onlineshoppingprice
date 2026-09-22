@@ -31,7 +31,7 @@ for script_path in scripts:
     print("=" * 50)
     
     try:
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
         result = subprocess.run(
             [sys.executable, script_path], 
             check=True,

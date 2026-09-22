@@ -37,6 +37,9 @@ jobs:
           patchright install-deps
 
       - name: Run Tops Category Scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: |
           python py/scraper/tops_category_scraper.py
 
