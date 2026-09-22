@@ -1,27 +1,22 @@
 # Core data processing
-polars
-pandas
+polars==1.44.2
 
 # Web scraping
-selenium
-playwright
-patchright
-beautifulsoup4
-scrapling
-requests
+selenium==4.49.0
+playwright==1.63.0
+patchright==1.62.3
+beautifulsoup4==4.15.0
+scrapling==0.4.15
+requests==2.34.2
 
 # Excel handling
-xlsxwriter
-fastexcel
-openpyxl
+xlsxwriter==3.2.9
 
-# Image processing
-Pillow
-numpy
-
-
+# Database & Environment
+psycopg2-binary==2.9.13
+python-dotenv==1.2.3
 
 # Patchright dependencies (Tops Cloudflare bypass)
-msgspec
-browserforge
-curl-cffi
+msgspec==0.21.1
+browserforge==1.2.4
+curl-cffi==0.16.3

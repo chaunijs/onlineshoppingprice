@@ -45,7 +45,7 @@ The project utilizes GitHub Actions to completely automate the data collection p
 4. **Python & Browser Packages:** Installs standard dependencies from `requirements.txt`, followed by downloading the necessary Chromium binaries and system dependencies required by Playwright and Patchright.
 5. **Execution:** Runs `python orchestrator.py`.
 6. **Artifact Archival:** Collects everything generated in `py/scraper/output/` and zips it into a downloadable GitHub Artifact named `scraping-pipeline-outputs`. 
-7. **Storage Optimization:** Artifacts are configured with a strict `retention-days: 7` policy to manage GitHub storage quotas efficiently.
+7. **Storage Optimization:** Artifacts are configured with a `retention-days: 60` policy to manage GitHub storage quotas efficiently.
 
 ---
 

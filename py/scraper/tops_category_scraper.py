@@ -48,6 +48,18 @@ from patchright.async_api import async_playwright
 # Configuration
 # ---------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from py.supabase_sink import sink_to_supabase
+except ImportError:
+    try:
+        from supabase_sink import sink_to_supabase
+    except ImportError:
+        sink_to_supabase = None
+
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -692,12 +704,16 @@ def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+CATALOG_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition"
+]
+
+
 def parse_product_names(df: pl.DataFrame, shop_name: str = "Tops") -> pl.DataFrame:
-    """Extracts Date, Brand, Volume, Unit, Pack, and Retailer from product name."""
+    """Extracts date, retailer, brand, name, volume, unit, pack, prices, condition."""
     if df.is_empty():
         return df
-
-    today_str = date.today().strftime("%Y-%m-%d")
 
     quant_unit_pattern = r"(?i)([\d.]+)\s*(ML|G|KG|L|LTR|LITERS?|GRAMS?)\b"
 
@@ -708,21 +724,27 @@ def parse_product_names(df: pl.DataFrame, shop_name: str = "Tops") -> pl.DataFra
     )
 
     return df.with_columns([
-        pl.lit(today_str).alias("Date"),
-        pl.col("name").str.split(" ").list.first().alias("Brand"),
+        pl.lit(today_date).cast(pl.String).alias("date"),
+        pl.lit(shop_name).cast(pl.String).alias("retailer"),
+        pl.col("name").str.split(" ").list.first().cast(pl.String).alias("brand"),
+        pl.col("name").cast(pl.String).alias("name"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 1)
           .cast(pl.Float64, strict=False)
-          .alias("Volume"),
+          .alias("volume"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 2)
           .str.to_uppercase()
-          .alias("Unit"),
+          .cast(pl.String)
+          .alias("unit"),
         pl.col("name")
           .str.extract(pack_pattern, 1)
           .str.to_uppercase()
-          .alias("Pack"),
-        pl.lit(shop_name).alias("Retailer")
+          .cast(pl.String)
+          .alias("pack"),
+        pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
+        pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
+        pl.col("condition").cast(pl.String).alias("condition"),
     ])
 
 
@@ -759,7 +781,7 @@ async def run_pipeline(urls: list = None):
     # ---------- Transform & Clean ----------
     df_prep = re_evaluate_price(raw_df)
     df_transformed = parse_product_names(df_prep, "Tops")
-    df_final = df_transformed.unique(subset=["name"], maintain_order=True)
+    df_final = df_transformed.unique(subset=["name"], maintain_order=True).select(CATALOG_COLUMNS)
 
     print("\n--- Sample Scraped Records (Head 15) ---")
     print(df_final.head(15))
@@ -768,6 +790,10 @@ async def run_pipeline(urls: list = None):
     output_filename = OUTPUT_DIR / f"tops_category_{today_date}.xlsx"
     df_final.write_excel(str(output_filename))
     print(f"\n✅ Successfully saved {len(df_final)} items to: {output_filename}")
+
+    # ---------- Sink to Supabase ----------
+    if sink_to_supabase and not df_final.is_empty():
+        sink_to_supabase(df_final, "price_catalog")
 
     print("\n" + "=" * 70)
     print("Entire category scraping pipeline completed.")

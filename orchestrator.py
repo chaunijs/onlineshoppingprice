@@ -9,6 +9,12 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 if hasattr(sys.stderr, "reconfigure"):
     try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -32,7 +38,7 @@ for script_path in scripts:
     print("="*50)
     
     try:
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
         result = subprocess.run(
             [sys.executable, script_path], 
             check=True,

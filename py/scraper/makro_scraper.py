@@ -13,6 +13,7 @@ Changelog:
 """
 
 import os
+import sys
 import json
 import asyncio
 import re
@@ -29,12 +30,38 @@ from playwright.async_api import async_playwright
 # Configuration
 # ---------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_ROOT = SCRIPT_DIR.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from py.supabase_sink import sink_to_supabase
+except ImportError:
+    try:
+        from supabase_sink import sink_to_supabase
+    except ImportError:
+        sink_to_supabase = None
+
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 today_date = datetime.datetime.now().strftime("%Y-%m-%d")
 print(f"Today is {today_date}")
 print(f"Output directory: {OUTPUT_DIR}")
+
+
+USE_SYSTEM_CHROME = os.getenv("USE_SYSTEM_CHROME", "true").lower() == "true"
+
+
+async def launch_browser(p):
+    """Launches Chromium with fallback to system Chrome for local/corporate networks."""
+    launch_kwargs = {
+        "headless": True,
+        "args": ["--disable-blink-features=AutomationControlled"]
+    }
+    if USE_SYSTEM_CHROME:
+        launch_kwargs["channel"] = "chrome"
+    return await p.chromium.launch(**launch_kwargs)
 
 
 # ---------------------------------------------------------------------
@@ -45,10 +72,7 @@ async def scrape_makro_spa_clicker(start_url: str) -> pl.DataFrame:
     seen_names = set()
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
+        browser = await launch_browser(p)
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -208,7 +232,7 @@ async def scrape_watchlist_with_conditions(urls: list) -> pl.DataFrame:
     scraped_data = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await launch_browser(p)
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -397,7 +421,7 @@ async def scrape_makro_product(url, browser_instance, semaphore):
 
 async def scrape_watchlist_prices(urls: list) -> pl.DataFrame:
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await launch_browser(p)
         semaphore = asyncio.Semaphore(3)
         tasks = [
             scrape_makro_product(url, browser, semaphore) for url in urls
@@ -419,14 +443,30 @@ async def scrape_watchlist_prices(urls: list) -> pl.DataFrame:
 # ---------------------------------------------------------------------
 # Data Prep Functions
 # ---------------------------------------------------------------------
-def ensure_consistent_schema(df: pl.DataFrame) -> pl.DataFrame:
-    df = df.with_columns(
+CATALOG_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition"
+]
+
+WATCHLIST_COLUMNS = [
+    "date", "retailer", "brand", "name", "volume",
+    "unit", "pack", "original_price", "promotion_price", "condition", "url"
+]
+
+
+def ensure_consistent_schema(df: pl.DataFrame, include_url: bool = False) -> pl.DataFrame:
+    cols = ["name", "promotion_price", "original_price", "condition"]
+    if include_url and "url" in df.columns:
+        cols.append("url")
+    transformed = df.with_columns(
         pl.col("name").cast(pl.String, strict=False).alias("name"),
         pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
         pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
         pl.col("condition").cast(pl.String, strict=False).alias("condition"),
     )
-    return df.select(["name", "promotion_price", "original_price", "condition"])
+    if include_url and "url" in df.columns:
+        transformed = transformed.with_columns(pl.col("url").cast(pl.String).alias("url"))
+    return transformed.select(cols)
 
 
 def re_evaluate_price(df: pl.DataFrame) -> pl.DataFrame:
@@ -458,8 +498,6 @@ def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
     """
     Standardizes column extraction for supermarket product data.
     """
-    today_str = date.today().strftime("%Y-%m-%d")
-
     quant_unit_pattern = r"(?i)([\d.]+)\s*(ML|G|KG|L|GRAMS?)"
 
     pack_pattern = (
@@ -469,21 +507,27 @@ def parse_product_names(df: pl.DataFrame, shop_name: str) -> pl.DataFrame:
     )
 
     return df.with_columns(
-        pl.lit(today_str).alias("Date"),
-        pl.col("name").str.split(" ").list.first().alias("Brand"),
+        pl.lit(today_date).cast(pl.String).alias("date"),
+        pl.lit(shop_name).cast(pl.String).alias("retailer"),
+        pl.col("name").str.split(" ").list.first().cast(pl.String).alias("brand"),
+        pl.col("name").cast(pl.String).alias("name"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 1)
           .cast(pl.Float64, strict=False)
-          .alias("Volume"),
+          .alias("volume"),
         pl.col("name")
           .str.extract(quant_unit_pattern, 2)
           .str.to_uppercase()
-          .alias("Unit"),
+          .cast(pl.String)
+          .alias("unit"),
         pl.col("name")
           .str.extract(pack_pattern, 1)
           .str.to_uppercase()
-          .alias("Pack"),
-        pl.lit(shop_name).alias("Retailer"),
+          .cast(pl.String)
+          .alias("pack"),
+        pl.col("original_price").cast(pl.Float64, strict=False).alias("original_price"),
+        pl.col("promotion_price").cast(pl.Float64, strict=False).alias("promotion_price"),
+        pl.col("condition").cast(pl.String).alias("condition"),
     )
 
 
@@ -591,10 +635,10 @@ async def run_pipeline():
 
     dfs_to_combine = []
     if not df_combined_makro.is_empty():
-        dfs_to_combine.append(ensure_consistent_schema(df_combined_makro))
+        dfs_to_combine.append(ensure_consistent_schema(df_combined_makro, include_url=False))
     if not df_merge_watchlist.is_empty():
-        df_watchlist_fixed = ensure_consistent_schema(df_merge_watchlist)
-        dfs_to_combine.append(df_watchlist_fixed)
+        df_watchlist_fixed = ensure_consistent_schema(df_merge_watchlist, include_url=True)
+        dfs_to_combine.append(ensure_consistent_schema(df_merge_watchlist, include_url=False))
     else:
         df_watchlist_fixed = pl.DataFrame()
 
@@ -606,20 +650,26 @@ async def run_pipeline():
 
     # ---------- Transform ----------
     df_prep_makro = re_evaluate_price(df_makro)
-    df_trans_makro = parse_product_names(df_prep_makro, "Makro")
+    df_trans_makro = parse_product_names(df_prep_makro, "Makro").select(CATALOG_COLUMNS)
 
     main_file = OUTPUT_DIR / f"makro_{today_date}.xlsx"
     df_trans_makro.write_excel(str(main_file))
     print(f"\n✅ Saved main output: {main_file}")
 
+    if sink_to_supabase:
+        sink_to_supabase(df_trans_makro, "price_catalog")
+
     # ---------- Watchlist Output ----------
     if not df_watchlist_fixed.is_empty():
         df_prep_watchlist = re_evaluate_price(df_watchlist_fixed)
-        df_trans_watchlist = parse_product_names(df_prep_watchlist, "Makro")
+        df_trans_watchlist = parse_product_names(df_prep_watchlist, "Makro").select(WATCHLIST_COLUMNS)
 
         watchlist_file = OUTPUT_DIR / f"makro_watchlist_{today_date}.xlsx"
         df_trans_watchlist.write_excel(str(watchlist_file))
         print(f"✅ Saved watchlist output: {watchlist_file}")
+
+        if sink_to_supabase:
+            sink_to_supabase(df_trans_watchlist, "watchlist")
 
     # ---------- Search Results ----------
     search_df = pl.DataFrame({"product_name": list_to_search})

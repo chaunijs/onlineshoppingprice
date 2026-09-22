@@ -8,3 +8,9 @@ output/*.xlsm
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Environments & Secrets
+.env
+.env.*
+*.env
+.venv/
