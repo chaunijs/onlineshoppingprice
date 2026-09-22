@@ -175,8 +175,8 @@ def _sink_via_rest(
     """
     Inserts records into Supabase using PostgREST API with SUPABASE_URL and SUPABASE_SECRET_KEY.
     """
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    supabase_key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY")
+    supabase_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    supabase_key = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY") or "").strip()
     if not supabase_url or not supabase_key:
         print("❌ [Supabase REST] SUPABASE_URL or SUPABASE_SECRET_KEY is missing from environment.")
         return False
@@ -284,10 +284,10 @@ def sink_to_supabase(
         return False
 
     # Check available credentials
-    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    supabase_key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY")
+    supabase_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    supabase_key = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY") or "").strip()
     has_rest = bool(supabase_url and supabase_key)
-    has_pg = bool(os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_PASSWORD"))
+    has_pg = bool((os.getenv("DATABASE_URL") or "").strip() or (os.getenv("SUPABASE_DB_PASSWORD") or "").strip())
 
     if not has_rest and not has_pg:
         print(f"\n" + "!" * 70)
@@ -325,8 +325,8 @@ def sink_to_supabase(
 if __name__ == "__main__":
     print("Testing Supabase connection and sink utility...")
     # 1. Test REST API
-    s_url = os.getenv("SUPABASE_URL")
-    s_key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY")
+    s_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    s_key = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_KEY") or "").strip()
     if s_url and s_key:
         print(f"Testing Supabase REST API at: {s_url}")
         headers = {"apikey": s_key, "Authorization": f"Bearer {s_key}"}
