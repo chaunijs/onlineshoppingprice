@@ -488,7 +488,7 @@ def main():
     )
 
     # ---------- Combine (toggle here) ----------
-    just_watchlist = True
+    just_watchlist = False
 
     if just_watchlist:
         df_combined_sel = df_watchlist.select(cols_sel) if not df_watchlist.is_empty() else pl.DataFrame()
